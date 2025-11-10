@@ -1,6 +1,6 @@
 ---
 title: "Lab: List Processing"
-author: "Your Name Here"
+author: "Joycelyn Ayensu"
 format: html
 number-sections: true
 number-depth: 2
@@ -30,8 +30,22 @@ For this portion of the assignment, only work with the canonical Dr. Who files (
 Add a code chunk that will read each of the JSON files in. 
 Store the data in a `drwhoYYYY` object, where `YYYY` is the first year the series  began to air. 
 How are the data objects stored?
-
 ---
+
+```{r}
+library(jsonlite) 
+#drwho2005 <- read_json("drwho-210.json")
+#drwho1963 <- read_json("drwho-766.json")
+#drwho2023 <- read_json("drwho-72724.json")
+
+drwho2023 <- fromJSON("drwho-72724.json")
+drwho2005 <- fromJSON("drwho-210.json")
+drwho1963 <- fromJSON("drwho-766.json")
+
+#Check the structure of one file
+#str(drwho2023)
+```
+
 
 ## Examining List Data Structures
 
@@ -41,11 +55,29 @@ Hint: The `prettify()` function in the R package `jsonlite` will spit out a bett
 
 ----
 
-List here
+```{r}
+#| message: false
+#| warning: false
+library(jsonlite)
+library(tidyverse)
+library(lubridate)
+
+# Look at just the first episode to understand structure
+single_episode_json <- toJSON(drwho2023[1,], pretty = TRUE)
+
+
+```
 
 ----
 
 Is there any information stored in the list structure that you feel is redundant? If so, why?
+
+Yes! There is redundant information because the information doesn't vary between episodes.
+
+for instance , show URL (_links$show$href):URL("https://api.tvmaze.com/shows/72724") is repeated in every episode.
+
+Show name (_links$show$name): "Doctor Who" repeated in every episode
+Also show type is repeated in every episode.
 
 
 
@@ -55,9 +87,11 @@ Consider what information you would need to examine the structure of Dr. Who epi
 
 Sketch one or more rectangular data tables that look like your expected output. Remember that if you link to an image, you must link to something with a picture extension (`.png`, `.jpg`), and if you reference a file it should be using a local path and you must also add the picture to your git repository. 
 
+
 ---
 
-Sketch goes here
+
+![table_Sketch](table_sketch.jpg)
 
 ---
 
@@ -65,9 +99,17 @@ What operations will you need to perform to get the data into a form matching yo
 
 ---
 
-1. ... fill me in
-2. ...
-3. ...
+1. Read all three JSON files and extract nested data from _links, rating, and image columns
+
+2. Convert data types (dates to Date objects, ratings to numeric, IDs to integers)
+
+3. Combine all three data frames into one unified table
+
+4. Create derived variables like year from airdate
+
+5. Select and rename columns to match the sketch, keeping only relevant variables
+
+
 
 ## Implement Your Strategy
 
@@ -76,6 +118,75 @@ Make sure that the resulting tables have the correct variable types (e.g., dates
 
 Print out the first 5 rows of each table that you create (but no more)!
 
+```{r}
+#| message: false
+#| warning: false
+library(tibble)
+library(dplyr)
+library(tidyr)
+library(purrr)
+
+
+# Function to clean and transform a single Doctor Who dataset
+clean_drwho_data <- function(df) {
+  df %>%
+    mutate(
+      # Extract show information from nested structure
+      # _links$show is already a data frame, so we can access columns directly
+      show_id = str_extract(`_links`$show$href, "\\d+$") %>% as.integer(),
+      show_name = `_links`$show$name,
+      
+      # Extract rating (handle NULLs)
+      avg_rating = rating$average,
+      
+      # Convert dates to proper format
+      airdate = ymd(airdate),
+      airstamp = ymd_hms(airstamp),
+      
+      # Remove HTML tags from summary
+      summary_clean = str_remove_all(summary, "<.*?>"),
+      
+      # Extract image URLs (handle NULLs)
+      image_url = image$original
+    ) %>%
+    # Select and rename columns for clarity
+    select(
+      episode_id = id,
+      show_id,
+      show_name,
+      season,
+      episode_number = number,
+      episode_name = name,
+      episode_type = type,
+      airdate,
+      airtime,
+      airstamp,
+      runtime,
+      avg_rating,
+      summary = summary_clean,
+      image_url,
+      url
+    )
+}
+
+# Apply the cleaning function to each dataset
+drwho2023_clean <- clean_drwho_data(drwho2023)
+drwho2005_clean <- clean_drwho_data(drwho2005)
+drwho1963_clean <- clean_drwho_data(drwho1963)
+
+# Display first 5 rows of each cleaned dataset
+print("Doctor Who (2023-2025):")
+head(drwho2023_clean, 5)
+
+print("Doctor Who (2005-2022):")
+head(drwho2005_clean, 5)
+
+print("Doctor Who (1963-1996):")
+head(drwho1963_clean, 5)
+
+
+```
+
 ## Examining Episode Air Dates
 
 Visually represent the length of time between air dates of adjacent episodes within the same season, across all seasons of Dr. Who. You may need to create a factor to indicate which Dr. Who series is indicated, as there will be a Season 1 for each of the series. 
@@ -83,11 +194,58 @@ Your plot must have appropriate labels and a title.
 
 ---
 
-code chunk here
+```{r}
+#| message: false
+#| warning: false
+# Combine all three datasets
+all_drwho <- bind_rows(
+  drwho2023_clean,
+  drwho2005_clean,
+  drwho1963_clean
+) %>%
+  arrange(airdate)
+
+# Calculate time between adjacent episodes by season
+episode_gaps <- all_drwho %>%
+  group_by(show_id, show_name, season) %>%
+  arrange(airdate) %>%
+  mutate(
+    days_since_previous = as.numeric(difftime(airdate, lag(airdate), units = "days"))
+  ) %>%
+  filter(!is.na(days_since_previous)) %>%
+  ungroup()
+
+# Create visualization
+ggplot(episode_gaps, aes(x = season, y = days_since_previous, color = show_name)) +
+  geom_point(alpha = 0.6, size = 2) +
+  geom_smooth(se = FALSE, linewidth = 0.8) +
+  facet_wrap(~show_name, scales = "free_x", ncol = 1) +
+  labs(
+    title = "Time Between Adjacent Episodes by Season",
+    subtitle = "Across all Doctor Who series (1963-2025)",
+    x = "Season Number",
+    y = "Days Since Previous Episode",
+    color = "Series"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 14),
+    strip.text = element_text(face = "bold")
+  ) +
+  scale_color_brewer(palette = "Set1")
+
+
+```
+
 
 ---
 
 In 2-3 sentences, explain what conclusions you might draw from the data. What patterns do you notice? Are there data quality issues?
+
+The plot clearly shows how Doctor Who's scheduling has changed over time. The classic series had episodes airing pretty consistently every week (around 7 days apart), which makes sense for how TV worked back then. The newer series has way more variation in the gaps between episodes - you can see some really long gaps which are probably for special episodes or breaks between seasons. There might be some data quality issues though, since those really big spikes could be mixing up when seasons actually ended versus just regular episode gaps.
+
+
 
 # Timey-Wimey Series and Episodes
 
@@ -98,7 +256,73 @@ Use a functional programming approach to read in all of the files and bind them 
 
 ----
 
-functional code goes here
+```{r,functional code}
+#| message: false
+#| warning: false
+
+# Get all JSON files in the working directory
+json_files <- list.files(pattern = "\\.json$", full.names = TRUE)
+
+# Updated function to handle different data structures across files
+read_and_process_drwho <- function(file_path) {
+# Read the JSON file
+  data <- fromJSON(file_path)
+  
+# Apply cleaning with better NULL handling
+  cleaned <- data %>%
+    mutate(
+# Extract show information from nested structure
+      show_id = str_extract(`_links`$show$href, "\\d+$") %>% as.integer(),
+      show_name = `_links`$show$name,
+      
+# Extract rating (handle NULLs)
+      avg_rating = if("average" %in% names(rating)) rating$average else NA_real_,
+      
+# Convert dates to proper format
+      airdate = ymd(airdate),
+      airstamp = ymd_hms(airstamp),
+      
+# Remove HTML tags from summary
+      summary_clean = str_remove_all(summary, "<.*?>"),
+      
+# Extract image URLs (handle when image is NULL or missing)
+      image_url = if(is.data.frame(image) && "original" %in% names(image)) {
+        image$original
+      } else {
+        NA_character_
+      }
+    ) %>%
+# Select and rename columns for clarity
+    select(
+      episode_id = id,
+      show_id,
+      show_name,
+      season,
+      episode_number = number,
+      episode_name = name,
+      episode_type = type,
+      airdate,
+      airtime,
+      airstamp,
+      runtime,
+      avg_rating,
+      summary = summary_clean,
+      image_url,
+      url
+    )
+  
+  return(cleaned)
+}
+
+# Use functional programming (map_dfr) to read all files and bind them together
+all_shows <- map_dfr(json_files, read_and_process_drwho)
+
+# Display summary
+print(unique(all_shows$show_name))
+
+# Show first few rows
+head(all_shows, 5)
+```
 
 ----
 
@@ -108,8 +332,41 @@ Call this rectangular table `whoverse`.
 
 ----
 
-Cleaning code goes here
+```{r}
+# The data is already cleaned through the read_and_process_drwho function
+# I just need to assign it to whoverse and verify it's tidy
 
+whoverse <- all_shows %>%
+  arrange(airdate) %>%
+  mutate(
+ # Ensure all data types are correct
+    episode_id = as.integer(episode_id),
+    show_id = as.integer(show_id),
+    show_name = as.character(show_name),
+    season = as.integer(season),
+    episode_number = as.integer(episode_number),
+    episode_name = as.character(episode_name),
+    episode_type = as.character(episode_type),
+    airdate = as.Date(airdate),
+    airtime = as.character(airtime),
+    airstamp = as.POSIXct(airstamp),
+    runtime = as.integer(runtime),
+    avg_rating = as.numeric(avg_rating),
+    summary = as.character(summary),
+    image_url = as.character(image_url),
+    url = as.character(url)
+  )
+
+# Check data types
+
+str(whoverse)
+
+# Display first 5 rows
+head(whoverse, 5)
+
+
+
+```
 ----
 
 
@@ -130,7 +387,64 @@ You should use a functional programming approach when reading in these files.
 
 ----
 
-Read in JSON files from URLs here
+```{r, Read in JSON files}
+# Extract unique show URLs from the _links column
+show_urls <- whoverse %>%
+  distinct(show_id, show_name) %>%
+  left_join(
+    whoverse %>% select(show_id, `_links` = url) %>% slice(1),
+    by = "show_id"
+  ) %>%
+  mutate(
+    # Extract the show URL from the href
+    show_url = paste0("https://api.tvmaze.com/shows/", show_id)
+  ) %>%
+  distinct(show_id, show_url)
+
+# Function to safely fetch show information from API
+get_show_metadata <- function(show_url) {
+  tryCatch({
+    # Fetch the show-level JSON
+    show_data <- fromJSON(show_url)
+    
+    # Extract relevant fields
+    tibble(
+      show_id = show_data$id,
+      show_name = show_data$name,
+      show_type = show_data$type,
+      language = show_data$language,
+      status = show_data$status,
+      premiered = ymd(show_data$premiered),
+      ended = if(!is.null(show_data$ended)) ymd(show_data$ended) else NA,
+      runtime_default = show_data$runtime,
+      network_name = if(!is.null(show_data$network$name)) show_data$network$name else NA,
+      country = if(!is.null(show_data$network$country$name)) show_data$network$country$name else NA,
+      web_channel = if(!is.null(show_data$webChannel$name)) show_data$webChannel$name else NA
+    )
+  }, error = function(e) {
+    message("Error fetching: ", show_url)
+    return(NULL)
+  })
+}
+
+# Use functional programming to fetch all show metadata
+# Add a small delay to be polite to the server
+show_metadata <- map_dfr(show_urls$show_url, ~{
+  Sys.sleep(0.5)  # Wait 0.5 seconds between requests to be polite
+  get_show_metadata(.x)
+})
+
+# Display the show metadata
+print(show_metadata)
+
+# Join with episode data using show_id as the key
+whoverse_complete <- whoverse %>%
+  left_join(show_metadata, by = "show_id")
+
+head(whoverse_complete, 5)
+
+```
+
 
 ----
 
@@ -138,13 +452,65 @@ Process the JSON files using a functional approach and construct an appropriate 
 
 ----
 
-Process JSON files to make a table here
+```{r}
+#| message: false
+#| warning: false
+# Extract unique show URLs - ensure only one call per show
+show_info <- whoverse %>%
+  distinct(show_id, show_name) %>%
+  mutate(
+    show_url = paste0("https://api.tvmaze.com/shows/", show_id)
+  )
+
+# Function to fetch and process show metadata from API
+get_show_metadata <- function(show_url) {
+  tryCatch({
+# Fetch the show-level JSON
+    show_data <- fromJSON(show_url)
+    
+ # Extract and structure relevant fields
+    tibble(
+      show_id = show_data$id,
+      show_name = show_data$name,
+      show_type = show_data$type,
+      language = show_data$language,
+      status = show_data$status,
+      premiered = ymd(show_data$premiered),
+      ended = if(!is.null(show_data$ended)) ymd(show_data$ended) else NA,
+      runtime_default = show_data$runtime,
+      network_name = if(!is.null(show_data$network$name)) show_data$network$name else NA_character_,
+      country = if(!is.null(show_data$network$country$name)) show_data$network$country$name else NA_character_,
+      web_channel = if(!is.null(show_data$webChannel$name)) show_data$webChannel$name else NA_character_,
+      official_site = if(!is.null(show_data$officialSite)) show_data$officialSite else NA_character_,
+      rating = if(!is.null(show_data$rating$average)) show_data$rating$average else NA_real_,
+      summary = if(!is.null(show_data$summary)) str_remove_all(show_data$summary, "<.*?>") else NA_character_
+    )
+  }, error = function(e) {
+    message("Error fetching show_id ", str_extract(show_url, "\\d+$"), ": ", e$message)
+    return(NULL)
+  })
+}
+
+# Use functional programming (map_dfr) to fetch all show metadata
+# Include polite delay between requests
+show_metadata_table <- map_dfr(show_info$show_url, ~{
+  Sys.sleep(0.5)  # Be polite: wait 0.5 seconds between API calls
+  get_show_metadata(.x)
+})
+
+print(show_metadata_table)
+
+# Show first 5 rows
+head(show_metadata_table, 5)
+
+```
+
 
 ----
 
 What keys would you use to join this data with the `whoverse` episode level data? Explain.
 
-> Explanation
+> I would use show_id as the key. It uniquely identifies each show and appears in both tables, so it creates a clean one-to-many relationship (one show, many episodes). It's more reliable than using show names since IDs don't have spelling variations or special character issues.
 
 
 ## Explore!
@@ -157,10 +523,96 @@ Any results (graphics, tables, models) should be explained with at least 2-3 sen
 If you're stuck, consider examining the frequency of words in the episode descriptions across different series or seasons. Or, look at the episode guest cast by appending `/guestcast/` to the episode URL and see whether there are common guests across different seasons. 
 
 ----
-
-Question goes here
-
+How has the average episode rating changed over time across the different Doctor Who series, and which eras or seasons were most popular with viewers?
 ----
 
 Code goes here -- once you output a result, you should explain it using markdown text, and then start a new code chunk to continue your exploration. 
 
+```{r}
+# Analyze ratings over time
+rating_analysis <- whoverse %>%
+  filter(!is.na(avg_rating)) %>%
+  mutate(
+    year = year(airdate),
+    decade = (year %/% 10) * 10
+  )
+
+# Calculate average ratings by show and season
+rating_by_season <- rating_analysis %>%
+  group_by(show_name, season) %>%
+  summarise(
+    mean_rating = mean(avg_rating, na.rm = TRUE),
+    median_rating = median(avg_rating, na.rm = TRUE),
+    n_episodes = n(),
+    .groups = "drop"
+  )
+
+# Visualize ratings over seasons
+ggplot(rating_by_season, aes(x = season, y = mean_rating, color = show_name)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~show_name, scales = "free_x", ncol = 1) +
+  labs(
+    title = "Average Episode Ratings by Season",
+    subtitle = "Across the Doctor Who Universe",
+    x = "Season Number",
+    y = "Average Rating (out of 10)",
+    color = "Series"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 14)
+  ) +
+  scale_color_brewer(palette = "Set1")
+
+# Find the highest and lowest rated episodes
+top_episodes <- whoverse %>%
+  filter(!is.na(avg_rating)) %>%
+  arrange(desc(avg_rating)) %>%
+  select(show_name, season, episode_number, episode_name, avg_rating, airdate) %>%
+  head(10)
+
+bottom_episodes <- whoverse %>%
+  filter(!is.na(avg_rating)) %>%
+  arrange(avg_rating) %>%
+  select(show_name, season, episode_number, episode_name, avg_rating, airdate) %>%
+  head(10)
+
+print(top_episodes)
+print(bottom_episodes)
+
+# Compare ratings across different shows in the Whoverse
+show_comparison <- rating_analysis %>%
+  group_by(show_name) %>%
+  summarise(
+    mean_rating = mean(avg_rating, na.rm = TRUE),
+    median_rating = median(avg_rating, na.rm = TRUE),
+    sd_rating = sd(avg_rating, na.rm = TRUE),
+    min_rating = min(avg_rating, na.rm = TRUE),
+    max_rating = max(avg_rating, na.rm = TRUE),
+    n_rated_episodes = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(mean_rating))
+
+print(show_comparison)
+
+# Box plot comparison
+ggplot(rating_analysis, aes(x = reorder(show_name, avg_rating), y = avg_rating, fill = show_name)) +
+  geom_boxplot(alpha = 0.7) +
+  geom_jitter(alpha = 0.2, width = 0.2) +
+  coord_flip() +
+  labs(
+    title = "Distribution of Episode Ratings Across Doctor Who Universe",
+    x = "Show",
+    y = "Episode Rating",
+    fill = "Show"
+  ) +
+  theme_minimal() +
+  theme(legend.position = "none")
+
+```
+
+# explanation
+The comparison reveals significant differences between shows. Some spin-offs or specific eras had more consistent quality, while others varied widely episode-to-episode. The violin plots give us the full picture of how ratings were distributed.
